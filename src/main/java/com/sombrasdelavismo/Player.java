@@ -20,7 +20,7 @@ public class Player {
         this.battlefield = new ArrayList<>();
         this.life = 20;
         this.mana = 0;
-        this.maxMana = 0;
+        this.maxMana = 2;
     }
 
     public void addCardToDeck(Card card) {

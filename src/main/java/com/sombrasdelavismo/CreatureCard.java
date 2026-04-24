@@ -38,7 +38,7 @@ public class CreatureCard extends Card {
     public void startOwnerTurn() {
         if (justPlayed) {
             justPlayed = false;
-            readyToAttack = false;
+            readyToAttack = true;
         } else {
             readyToAttack = true;
         }

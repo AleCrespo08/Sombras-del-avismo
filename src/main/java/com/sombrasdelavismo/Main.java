@@ -13,18 +13,22 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTabbedPane;
 import javax.swing.JTextArea;
+import javax.swing.Timer;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
+import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.GridLayout;
 import java.awt.Image;
 import java.awt.image.BufferedImage;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.io.IOException;
 import java.net.URL;
 import java.util.ArrayList;
@@ -88,11 +92,19 @@ public class Main extends JFrame {
     private Game game;
     private List<Card> collection;
     private Card selectedCard;
+    private String playerOneName = "Jugador 1";
+    private String playerTwoName = "Jugador 2";
+    private long matchStartTime;
+    private Timer matchTimer;
 
     private final JLabel statusLabel = new JLabel();
     private final JLabel turnLabel = new JLabel();
-    private final JLabel playerLabel = new JLabel();
-    private final JLabel opponentLabel = new JLabel();
+    private final JLabel timerLabel = new JLabel();
+    private final JLabel playerOneLabel = new JLabel();
+    private final JLabel playerTwoLabel = new JLabel();
+    private final JLabel topBoardTitleLabel = new JLabel();
+    private final JLabel bottomBoardTitleLabel = new JLabel();
+    private final JLabel handTitleLabel = new JLabel();
     private final JLabel previewNameLabel = new JLabel();
     private final JLabel previewMetaLabel = new JLabel();
     private final JLabel previewImageLabel = new JLabel();
@@ -116,13 +128,16 @@ public class Main extends JFrame {
     }
 
     private void startNewGame() {
+        capturePlayerNames();
         collection = buildCollection();
-        Player player1 = new Player("Jugador 1");
-        Player player2 = new Player("Jugador 2");
+        Player player1 = new Player(playerOneName);
+        Player player2 = new Player(playerTwoName);
         dealCards(player1, player2, collection);
         game = new Game(player1, player2);
         game.startGame();
-        selectedCard = game.getCurrentPlayer().getHand().isEmpty() ? null : game.getCurrentPlayer().getHand().get(0);
+        selectedCard = findBestSelection();
+        matchStartTime = System.currentTimeMillis();
+        ensureMatchTimerRunning();
         logArea.setText("");
     }
 
@@ -207,19 +222,23 @@ public class Main extends JFrame {
 
         turnLabel.setForeground(new Color(255, 210, 120));
         turnLabel.setFont(new Font("SansSerif", Font.BOLD, 18));
-        playerLabel.setForeground(new Color(230, 236, 242));
-        playerLabel.setFont(new Font("SansSerif", Font.PLAIN, 15));
-        opponentLabel.setForeground(new Color(230, 236, 242));
-        opponentLabel.setFont(new Font("SansSerif", Font.PLAIN, 15));
+        timerLabel.setForeground(new Color(190, 205, 220));
+        timerLabel.setFont(new Font("SansSerif", Font.PLAIN, 15));
+        playerOneLabel.setForeground(new Color(230, 236, 242));
+        playerOneLabel.setFont(new Font("SansSerif", Font.PLAIN, 15));
+        playerTwoLabel.setForeground(new Color(230, 236, 242));
+        playerTwoLabel.setFont(new Font("SansSerif", Font.PLAIN, 15));
 
         JPanel stats = new JPanel();
         stats.setOpaque(false);
         stats.setLayout(new BoxLayout(stats, BoxLayout.Y_AXIS));
         stats.add(turnLabel);
         stats.add(Box.createVerticalStrut(10));
-        stats.add(playerLabel);
+        stats.add(timerLabel);
         stats.add(Box.createVerticalStrut(8));
-        stats.add(opponentLabel);
+        stats.add(playerOneLabel);
+        stats.add(Box.createVerticalStrut(8));
+        stats.add(playerTwoLabel);
 
         styleButton(playButton, new Color(190, 130, 50));
         styleButton(attackButton, new Color(150, 70, 60));
@@ -278,9 +297,9 @@ public class Main extends JFrame {
         JPanel panel = new JPanel(new GridLayout(3, 1, 0, 12));
         panel.setBackground(APP_BACKGROUND);
         panel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
-        panel.add(buildCardRow("Mesa rival", opponentBoardPanel));
-        panel.add(buildCardRow("Tu mesa", playerBoardPanel));
-        panel.add(buildCardRow("Tu mano", handPanel));
+        panel.add(buildCardRow(topBoardTitleLabel, opponentBoardPanel));
+        panel.add(buildCardRow(bottomBoardTitleLabel, playerBoardPanel));
+        panel.add(buildCardRow(handTitleLabel, handPanel));
         return panel;
     }
 
@@ -294,17 +313,16 @@ public class Main extends JFrame {
         return scrollPane;
     }
 
-    private JPanel buildCardRow(String title, JPanel content) {
+    private JPanel buildCardRow(JLabel titleLabel, JPanel content) {
         JPanel panel = createSection(new BorderLayout(0, 8));
-        JLabel label = new JLabel(title);
-        label.setForeground(new Color(240, 236, 228));
-        label.setFont(new Font("SansSerif", Font.BOLD, 18));
+        titleLabel.setForeground(new Color(240, 236, 228));
+        titleLabel.setFont(new Font("SansSerif", Font.BOLD, 18));
         content.setOpaque(false);
 
         JScrollPane scrollPane = new JScrollPane(content);
         styleScrollPane(scrollPane);
 
-        panel.add(label, BorderLayout.NORTH);
+        panel.add(titleLabel, BorderLayout.NORTH);
         panel.add(scrollPane, BorderLayout.CENTER);
         return panel;
     }
@@ -316,17 +334,14 @@ public class Main extends JFrame {
             return;
         }
 
-        appendLog(game.playCard(selectedCard));
-        if (!game.getCurrentPlayer().getHand().contains(selectedCard)) {
-            selectedCard = findBestSelection();
-        }
-        refreshUi(game.getLastAction());
+        playSelectedCard(selectedCard);
     }
 
     private void handleAttack() {
         CreatureCard creature = selectedCard instanceof CreatureCard ? (CreatureCard) selectedCard : null;
-        appendLog(game.attackWith(creature));
-        refreshUi(game.getLastAction());
+        String attackResult = game.attackWith(creature);
+        appendLog(attackResult);
+        refreshUi(attackResult);
     }
 
     private void handleEndTurn() {
@@ -343,12 +358,18 @@ public class Main extends JFrame {
 
     private void refreshUi(String message) {
         Player current = game.getCurrentPlayer();
-        Player opponent = game.getWaitingPlayer();
+        Player waiting = game.getWaitingPlayer();
+        Player playerOne = game.getPlayer1();
+        Player playerTwo = game.getPlayer2();
 
         statusLabel.setText(game.getWinner() == null ? message : "Ganador: " + game.getWinner().getName());
         turnLabel.setText("Turno " + game.getTurnNumber() + " - " + current.getName());
-        playerLabel.setText("Tu estado: vida " + current.getLife() + " | mana " + current.getMana() + "/" + current.getMaxMana() + " | mano " + current.getHand().size());
-        opponentLabel.setText("Rival: vida " + opponent.getLife() + " | mana " + opponent.getMana() + "/" + opponent.getMaxMana() + " | mano " + opponent.getHand().size());
+        playerOneLabel.setText(buildPlayerStatus(playerOne));
+        playerTwoLabel.setText(buildPlayerStatus(playerTwo));
+        timerLabel.setText("Tiempo de partida: " + formatElapsedTime());
+        topBoardTitleLabel.setText("Mesa de " + waiting.getName());
+        bottomBoardTitleLabel.setText("Mesa de " + current.getName());
+        handTitleLabel.setText("Mano de " + current.getName());
 
         rebuildOpponentBoard();
         rebuildPlayerBoard();
@@ -412,6 +433,16 @@ public class Main extends JFrame {
             refreshUi("Carta seleccionada.");
         });
 
+        JButton attackCardButton = new JButton("Atacar");
+        styleMiniButton(attackCardButton);
+        attackCardButton.setEnabled(currentPlayersCard && creature.isReadyToAttack());
+        attackCardButton.addActionListener(event -> {
+            selectedCard = creature;
+            String attackResult = game.attackWith(creature);
+            appendLog(attackResult);
+            refreshUi(attackResult);
+        });
+
         panel.add(image, BorderLayout.NORTH);
         panel.add(name, BorderLayout.CENTER);
 
@@ -426,6 +457,10 @@ public class Main extends JFrame {
         south.add(detail);
         south.add(Box.createVerticalStrut(6));
         south.add(button);
+        if (currentPlayersCard) {
+            south.add(Box.createVerticalStrut(6));
+            south.add(attackCardButton);
+        }
         panel.add(south, BorderLayout.SOUTH);
         return panel;
     }
@@ -438,12 +473,14 @@ public class Main extends JFrame {
         JLabel name = smallCenteredLabel(card.getName(), true);
         JLabel meta = smallCenteredLabel(compactMeta(card), false);
         JLabel detail = smallCenteredLabel(shortDescription(card), false);
-
-        JButton button = new JButton("Seleccionar");
+        JButton button = new JButton(game.getCurrentPlayer().canPlay(card) ? "Jugar" : "Seleccionar");
         styleMiniButton(button);
         button.addActionListener(event -> {
-            selectedCard = card;
-            refreshUi("Carta seleccionada.");
+            if (game.getCurrentPlayer().getHand().contains(card) && game.getCurrentPlayer().canPlay(card)) {
+                playSelectedCard(card);
+                return;
+            }
+            handleHandCardClick(card);
         });
 
         panel.add(image, BorderLayout.NORTH);
@@ -461,6 +498,14 @@ public class Main extends JFrame {
         south.add(Box.createVerticalStrut(6));
         south.add(button);
         panel.add(south, BorderLayout.SOUTH);
+
+        panel.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        panel.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent event) {
+                handleHandCardClick(card);
+            }
+        });
         return panel;
     }
 
@@ -577,7 +622,7 @@ public class Main extends JFrame {
     private Card createCard(String fileName) {
         String name = prettifyName(fileName);
         String imagePath = "cards/" + fileName;
-        int cost = 1 + Math.floorMod(name.length(), 6);
+        int cost = 1 + Math.floorMod(name.length(), 3);
 
         if (isSpellCard(name)) {
             int damage = 2 + Math.floorMod(name.hashCode(), 4);
@@ -589,7 +634,7 @@ public class Main extends JFrame {
         int power = 2 + Math.floorMod(name.hashCode(), 5);
         int toughness = 3 + Math.floorMod(name.hashCode() / 7, 4);
         return new CreatureCard(name, cost, power, toughness,
-                name + " entra en mesa como criatura y puede atacar en turnos posteriores.", imagePath);
+                name + " entra en mesa como criatura y podra atacar en tu siguiente turno.", imagePath);
     }
 
     private String buildSpellDescription(String name, int damage, int healing, int cardsToDraw) {
@@ -674,8 +719,8 @@ public class Main extends JFrame {
         }
         if (collection.contains(card)
                 && !game.getCurrentPlayer().getHand().contains(card)
-                && !game.getCurrentPlayer().getBattlefield().contains(card)
-                && !game.getWaitingPlayer().getBattlefield().contains(card)) {
+                && !game.getPlayer1().getBattlefield().contains(card)
+                && !game.getPlayer2().getBattlefield().contains(card)) {
             return "Esta carta esta en la coleccion. Puedes verla aqui en grande para conocer su coste y su efecto antes de que aparezca en partida.";
         }
         if (game.getCurrentPlayer().getHand().contains(card)) {
@@ -746,9 +791,74 @@ public class Main extends JFrame {
         return selectedCard == card;
     }
 
+    private void playSelectedCard(Card card) {
+        Player actingPlayer = game.getCurrentPlayer();
+        boolean cardWasInHand = actingPlayer.getHand().contains(card);
+        String playResult = game.playCard(card);
+        appendLog(playResult);
+
+        boolean cardWasPlayed = cardWasInHand && !actingPlayer.getHand().contains(card);
+
+        selectedCard = findBestSelection();
+        refreshUi(cardWasPlayed ? playResult : game.getLastAction());
+    }
+
+    private void handleHandCardClick(Card card) {
+        selectedCard = card;
+        if (game.getCurrentPlayer().getHand().contains(card) && game.getCurrentPlayer().canPlay(card)) {
+            refreshUi("Carta seleccionada. Puedes jugarla cuando quieras este turno.");
+            return;
+        }
+        refreshUi("Carta seleccionada. Necesitas mas mana para jugarla.");
+    }
+
+    private String buildPlayerStatus(Player player) {
+        String marker = player == game.getCurrentPlayer() ? " <- turno actual" : "";
+        return player.getName() + ": vida " + player.getLife()
+                + " | mana " + player.getMana() + "/" + player.getMaxMana()
+                + " | mano " + player.getHand().size()
+                + " | mesa " + player.getBattlefield().size()
+                + marker;
+    }
+
+    private String formatElapsedTime() {
+        long elapsedSeconds = Math.max(0L, (System.currentTimeMillis() - matchStartTime) / 1000L);
+        long minutes = elapsedSeconds / 60L;
+        long seconds = elapsedSeconds % 60L;
+        return String.format("%02d:%02d", minutes, seconds);
+    }
+
+    private void ensureMatchTimerRunning() {
+        if (matchTimer == null) {
+            matchTimer = new Timer(1000, event -> timerLabel.setText("Tiempo de partida: " + formatElapsedTime()));
+        }
+        if (!matchTimer.isRunning()) {
+            matchTimer.start();
+        }
+    }
+
+    private void capturePlayerNames() {
+        playerOneName = requestPlayerName("Nombre del jugador 1", playerOneName);
+        playerTwoName = requestPlayerName("Nombre del jugador 2", playerTwoName);
+    }
+
+    private String requestPlayerName(String prompt, String fallback) {
+        String value = JOptionPane.showInputDialog(this, prompt, fallback);
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        return value.trim();
+    }
+
     private Card findBestSelection() {
-        if (selectedCard != null && game.getCurrentPlayer().getHand().contains(selectedCard)) {
+        if (selectedCard != null && game.getCurrentPlayer().getHand().contains(selectedCard)
+                && game.getCurrentPlayer().canPlay(selectedCard)) {
             return selectedCard;
+        }
+        for (Card card : game.getCurrentPlayer().getHand()) {
+            if (game.getCurrentPlayer().canPlay(card)) {
+                return card;
+            }
         }
         if (!game.getCurrentPlayer().getHand().isEmpty()) {
             return game.getCurrentPlayer().getHand().get(0);
@@ -785,15 +895,17 @@ public class Main extends JFrame {
         StringBuilder text = new StringBuilder();
         text.append("COMO SE JUEGA\n\n");
         text.append("1. En tu turno robas carta y recuperas mana automaticamente.\n");
-        text.append("2. Selecciona una carta de tu mano y pulsa Jugar para bajarla.\n");
-        text.append("3. Las criaturas entran a tu mesa y no atacan el mismo turno en que se juegan.\n");
-        text.append("4. En un turno posterior, selecciona una criatura lista y pulsa Atacar.\n");
-        text.append("5. Los hechizos hacen dano, curan o te hacen robar cartas al momento.\n");
-        text.append("6. Gana quien deje al rival sin vidas.\n\n");
+        text.append("2. Puedes jugar varias cartas en el mismo turno mientras tengas mana.\n");
+        text.append("3. Selecciona una carta de tu mano y pulsa Jugar para bajarla.\n");
+        text.append("4. Las criaturas entran a tu mesa y no atacan el mismo turno en que se juegan.\n");
+        text.append("5. En tu siguiente turno, selecciona una criatura lista y pulsa Atacar.\n");
+        text.append("6. Los hechizos hacen daño, curan o te hacen robar cartas al momento.\n");
+        text.append("7. Pulsa Pasar turno solo cuando hayas terminado de jugar y atacar.\n");
+        text.append("8. Gana quien deje al rival sin vidas.\n\n");
         text.append("QUE PUEDES VER EN LA PANTALLA\n\n");
         text.append("- Tu mano: cartas que puedes jugar si tienes mana suficiente.\n");
         text.append("- Tu mesa: criaturas ya invocadas.\n");
-        text.append("- Mesa rival: criaturas del oponente.\n");
+        text.append("- La mesa rival: criaturas del oponente a las que te enfrentas.\n");
         text.append("- Coleccion: todas las cartas del juego para verlas en grande.\n");
         text.append("- Panel central: muestra la carta seleccionada con su descripcion completa.\n\n");
         text.append("PERSONAJES Y CARTAS DESTACADAS\n\n");

@@ -119,6 +119,9 @@ public class Game {
         rival.takeDamage(creatureCard.getPower());
         creatureCard.consumeAttack();
         updateWinner();
+        if (winner != null) {
+            return lastAction;
+        }
         lastAction = currentPlayer.getName() + " ataca con " + creatureCard.getName()
                 + " y hace " + creatureCard.getPower() + " de dano a " + rival.getName() + ".";
         return lastAction;
